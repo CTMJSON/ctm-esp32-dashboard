@@ -1,6 +1,9 @@
 # CTM ESP32 Activity Dashboard
 
-A compact, always-on activity dashboard for [CallTrackingMetrics](https://www.calltrackingmetrics.com) that runs on an ESP32 with a built-in color TFT. It sits on a desk and refreshes every 60 seconds, showing live call, chat, and agent activity for the current day.
+<img width="3484" height="2613" alt="IMG_9761" src="https://github.com/user-attachments/assets/94fbbf8d-5d07-4ada-b81c-e4d70076f91a" />
+
+
+A compact, always-on activity dashboard for [CTM](https://www.calltrackingmetrics.com) that runs on an ESP32 with a built-in color TFT. It sits on a desk and refreshes every 60 seconds, showing live call, chat, and agent activity for the current day.
 
 ## Hardware
 

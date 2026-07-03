@@ -36,7 +36,7 @@ A compact, always-on activity dashboard for [CallTrackingMetrics](https://www.ca
 - **Peak / Min** — highest per-minute activity across all directions today
 - **Agents** — ready = `accept: true` AND `value: "online"`; everything else = not ready
 - **IN / OUT / CHAT / MISSED / VIDEO** — today's totals per direction
-- **Ticker** — recent inbound answered call summaries (AI-generated), scrolling along the bottom
+- **Ticker** — recent inbound answered call transcriptions (AI-generated summaries), scrolling along the bottom
 
 Colors follow the CTM brand palette: Space Navy background, Nebula Blue header, Dark Matter Blue tiles, Sky Blue and Supernova Lime accents.
 
@@ -55,7 +55,7 @@ All five CTM OAuth scopes are requested: `profile`, `reports`, `activity`, `mana
 | `/api/v1/accounts/{id}` | GET | Read account timezone (for local clock display) |
 | `/api/v1/accounts/{id}/calls/history.json?interval=today` | GET | Today's call/chat/video totals + active count + peak |
 | `/api/v1/accounts/{id}/agents/history.json?bypass=cache` | POST | Agent ready/not-ready counts for today |
-| `/api/v1/accounts/{id}/calls?direction=inbound&status=answered&per_page=2&sort=desc` | GET | Recent call summaries for ticker |
+| `/api/v1/accounts/{id}/calls?direction=inbound&status=answered&has_transcription=1&per_page=2&sort=desc` | GET | Recent call transcriptions for ticker |
 
 Authentication is Bearer token (`Authorization: Bearer {access_token}`).
 
@@ -129,7 +129,8 @@ Subsequent boots load tokens from NVS and go straight to the dashboard.
 - HTTPS certificate validation is skipped (`WiFiClientSecure::setInsecure`). Fine for a LAN dashboard; use a CA bundle if you need it.
 - NTP is used only for the on-screen clock and day-of-week; the API calls rely on the server's `interval=today` so data is correct even before NTP syncs.
 - The agent status endpoint requires POST with form-encoded body (`interval=today&agent_ids=all`) — a plain GET returns only agents active in the last hour.
-- Call summaries are limited to `per_page=2` because the ESP32's HTTP buffer can't handle the full 220KB payload from larger page sizes.
+- Call transcriptions are limited to `per_page=2` because the ESP32's HTTP buffer can't handle the full 220KB payload from larger page sizes.
+- The agents/history endpoint returns 274KB (mostly the `series` array); the sketch reads only the first 50KB into a heap buffer, truncates at `"series"`, and parses just the agents array (~42KB).
 - The ESP32 has ~280 KB of free RAM; the ~20 KB agent response is parsed without a JSON filter (ArduinoJson's filter doesn't work on array nodes with object patterns).
 - Token version is tracked in NVS; bumping the version flag in code automatically clears old tokens on boot (useful when changing OAuth scopes).
 

@@ -401,9 +401,43 @@ static bool fetchAgents() {
   int code = http.POST(body);
   bool ok = false;
   if (code == 200) {
-    String payload = http.getString();
+    // 274KB total but agents array is only ~42KB (series array is 186KB)
+    // Read first 50KB into a heap buffer - enough for agents, skip series
+    WiFiClient* stream = http.getStreamPtr();
+    if (!stream) { http.end(); return false; }
+    stream->setTimeout(15000);
+
+    size_t bufSize = 50000;
+    char* buf = (char*)malloc(bufSize);
+    if (!buf) { http.end(); return false; }
+
+    size_t total = 0;
+    unsigned long lastData = millis();
+    while (millis() - lastData < 5000UL && total < bufSize - 1) {
+      while (stream->available() && total < bufSize - 1) {
+        int n = stream->readBytes(buf + total, bufSize - 1 - total);
+        if (n > 0) { total += n; lastData = millis(); }
+        else break;
+      }
+      delay(5);
+    }
+    buf[total] = '\0';
+
+    // Truncate at "series" and close the JSON object manually
+    char* seriesPos = strstr(buf, "\"series\"");
+    if (seriesPos) {
+      char* p = seriesPos - 1;
+      while (p > buf && (*p == ' ' || *p == ',' || *p == '\n' || *p == '\r')) p--;
+      *(p + 1) = '}';
+      *(p + 2) = '\0';
+      total = p + 2 - buf;
+    }
+
     JsonDocument doc;
-    if (!deserializeJson(doc, payload.c_str())) {
+    DeserializationError err = deserializeJson(doc, buf, total);
+    free(buf);
+
+    if (!err) {
       g_agentsReady = g_agentsNotReady = 0;
       JsonArray agents = doc["agents"];
       g_agentsTotal = agents.isNull() ? 0 : agents.size();
@@ -411,8 +445,8 @@ static bool fetchAgents() {
         for (JsonObject a : agents) {
           bool accept = a["status"]["accept"].as<bool>();
           const char* v = a["status"]["value"].as<const char*>();
-          if (accept && v && strcmp(v, "online") == 0) g_agentsReady++;
-          else g_agentsNotReady++;
+          bool online = (v && strcmp(v, "online") == 0);
+          if (accept && online) g_agentsReady++; else g_agentsNotReady++;
         }
       }
       ok = true;
@@ -426,12 +460,14 @@ static bool fetchRecentCalls() {
   WiFiClientSecure s; s.setInsecure();
   HTTPClient http;
   http.begin(s, String("https://") + API_HOST + "/api/v1/accounts/" + g_accountId +
-             "/calls?direction=inbound&status=answered&per_page=2&sort=desc");
+             "/calls?direction=inbound&status=answered&has_transcription=1&per_page=2&sort=desc");
   http.addHeader("Authorization", bearerHeader());
   http.addHeader("Accept", "application/json");
   http.setTimeout(15000);
   int code = http.GET();
   bool ok = false;
+  String newTicker = "";
+  int newCount = 0;
   if (code == 200) {
     String payload = http.getString();
     JsonDocument filter;
@@ -439,14 +475,12 @@ static bool fetchRecentCalls() {
     filter["calls"][0]["direction"] = true;
     JsonDocument doc;
     if (!deserializeJson(doc, payload.c_str(), DeserializationOption::Filter(filter))) {
-      g_summaryCount = 0;
-      g_tickerText = "";
       JsonArray calls = doc["calls"];
       if (!calls.isNull()) {
         for (JsonObject c : calls) {
           const char* summary = c["summary"].as<const char*>();
           const char* dir = c["direction"].as<const char*>();
-          if (summary && *summary && g_summaryCount < MAX_SUMMARIES) {
+          if (summary && *summary && newCount < MAX_SUMMARIES) {
             String entry = "";
             if (dir) {
               if (strcmp(dir, "inbound") == 0) entry = "IN: ";
@@ -458,8 +492,8 @@ static bool fetchRecentCalls() {
             }
             entry += String(summary);
             if (entry.length() > 120) entry = entry.substring(0, 117) + "...";
-            g_summaries[g_summaryCount++] = entry;
-            g_tickerText += entry + "  |  ";
+            newTicker += entry + "  |  ";
+            newCount++;
           }
         }
         ok = true;
@@ -467,6 +501,12 @@ static bool fetchRecentCalls() {
     }
   } else if (code == 401) g_authFailed = true;
   http.end();
+  // Only replace ticker if we got new data; keep old text on failure
+  if (ok && newTicker.length() > 0) {
+    g_tickerText = newTicker;
+    g_summaryCount = newCount;
+    g_tickerOffset = 0;
+  }
   return ok;
 }
 
@@ -644,7 +684,6 @@ static void render() {
   int tickerY = 214;
   tft.fillRect(0, tickerY, 320, 26, CTM_GALAXY_GREY);
   tft.drawFastHLine(0, tickerY, 320, COL_DIM);
-  g_tickerOffset = 0;  // reset scroll on each render
 }
 
 static void drawTicker() {
@@ -839,7 +878,7 @@ void loop() {
   }
 
   case STATE_BOOT:
-  default:
+  default: {
     if (WiFi.status() == WL_CONNECTED) {
       if (!g_accessToken.isEmpty()) {
         g_authFailed = false;
@@ -865,5 +904,6 @@ void loop() {
     }
     delay(1000);
     break;
+  }
   }
 }

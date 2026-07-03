@@ -34,6 +34,9 @@
 
 #define REFRESH_MS    60000UL
 #define API_HOST      "api.calltrackingmetrics.com"
+// Raised from 2 now that fetchRecentCalls() parses the response as a filtered
+// stream instead of buffering the whole payload - keep <= MAX_SUMMARIES below.
+#define RECENT_CALLS_PAGE_SIZE 8
 
 TFT_eSPI tft = TFT_eSPI();
 Preferences prefs;
@@ -463,21 +466,50 @@ static bool fetchRecentCalls() {
   WiFiClientSecure s; s.setInsecure();
   HTTPClient http;
   http.begin(s, String("https://") + API_HOST + "/api/v1/accounts/" + g_accountId +
-             "/calls?direction=inbound&status=answered&has_transcription=1&per_page=2&sort=desc");
+             "/calls?direction=inbound&status=answered&has_transcription=1&per_page=" +
+             String(RECENT_CALLS_PAGE_SIZE) + "&sort=desc");
   http.addHeader("Authorization", bearerHeader());
   http.addHeader("Accept", "application/json");
-  http.setTimeout(15000);
+  http.setTimeout(20000);
   int code = http.GET();
   bool ok = false;
   String newTicker = "";
   int newCount = 0;
   if (code == 200) {
-    String payload = http.getString();
+    // WiFiClientSecure's read() is non-blocking: it returns whatever's
+    // currently buffered and 0/-1 when nothing has arrived *yet* (not
+    // necessarily EOF - TLS records land in discrete chunks). Parsing
+    // straight off the stream with ArduinoJson doesn't retry on that, so it
+    // reports IncompleteInput on anything larger than what fits in a single
+    // TLS record. Buffer the full (known-size, from Content-Length) response
+    // first with the same idle-timeout poll loop fetchAgents() already uses
+    // below, then parse the complete buffer.
+    int contentLen = http.getSize();
+    size_t bufSize = contentLen > 0 ? (size_t)contentLen + 1 : 90000;
+    char* buf = (char*)malloc(bufSize);
+    if (!buf) { http.end(); return false; }
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t total = 0;
+    unsigned long lastData = millis();
+    while (millis() - lastData < 8000UL && total < bufSize - 1) {
+      while (stream->available() && total < bufSize - 1) {
+        int n = stream->readBytes(buf + total, bufSize - 1 - total);
+        if (n > 0) { total += n; lastData = millis(); }
+        else break;
+      }
+      delay(5);
+    }
+    buf[total] = '\0';
+
     JsonDocument filter;
     filter["calls"][0]["summary"] = true;
     filter["calls"][0]["direction"] = true;
     JsonDocument doc;
-    if (!deserializeJson(doc, payload.c_str(), DeserializationOption::Filter(filter))) {
+    DeserializationError jerr = deserializeJson(doc, buf, total, DeserializationOption::Filter(filter));
+    free(buf);
+
+    if (!jerr) {
       JsonArray calls = doc["calls"];
       if (!calls.isNull()) {
         for (JsonObject c : calls) {
@@ -751,6 +783,7 @@ static void drawTicker() {
 // --- Setup / Loop -----------------------------------------------------------
 
 void setup() {
+  Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(COL_BG);

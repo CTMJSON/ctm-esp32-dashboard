@@ -38,14 +38,11 @@
 TFT_eSPI tft = TFT_eSPI();
 Preferences prefs;
 
-// Draw the CTM logomark with transparency (skip 0x0000 pixels)
+// Draw the CTM logomark with transparency (skip 0x0000 pixels).
+// pushImage batches the whole 26x25 sprite into a single SPI transfer
+// instead of one drawPixel() (and SPI transaction) per pixel.
 static void drawCtmLogo(int x, int y) {
-  for (int row = 0; row < CTM_LOGO_H; row++) {
-    for (int col = 0; col < CTM_LOGO_W; col++) {
-      uint16_t px = pgm_read_word(&ctm_logo[row * CTM_LOGO_W + col]);
-      if (px != 0x0000) tft.drawPixel(x + col, y + row, px);
-    }
-  }
+  tft.pushImage(x, y, CTM_LOGO_W, CTM_LOGO_H, ctm_logo, (uint16_t)0x0000);
 }
 
 // CTM brand palette (RGB565)
@@ -305,8 +302,14 @@ static bool refreshAccessToken() {
       if (at && *at) {
         String newRefresh = doc["refresh_token"].as<const char*>();
         if (newRefresh.isEmpty()) newRefresh = g_refreshToken;
-        String acctId = doc["account_id"].as<String>();
-        if (acctId.isEmpty()) acctId = g_accountId;
+        // account_id is often omitted on refresh responses; keep the existing
+        // one in that case instead of risking a stringified "null" landing
+        // in NVS (as<String>() on a missing/null key is not reliably empty).
+        String acctId = g_accountId;
+        if (!doc["account_id"].isNull()) {
+          int acctInt = doc["account_id"].as<int>();
+          if (acctInt > 0) acctId = String(acctInt);
+        }
         saveTokens(at, newRefresh, acctId);
         ok = true;
       }
@@ -513,6 +516,9 @@ static bool fetchRecentCalls() {
 // --- Auth screen (device flow UI) -------------------------------------------
 
 static void drawAuthScreen() {
+  // Batch all the fills/text/pixels below into a single SPI transaction
+  // instead of one open+close per draw call.
+  tft.startWrite();
   tft.fillScreen(COL_BG);
 
   // Header
@@ -575,6 +581,7 @@ static void drawAuthScreen() {
   tft.setTextColor(remaining < 60 ? COL_ERR : COL_OK);
   tft.setCursor(10, 205);
   tft.printf("%d:%02d remaining", mins, secs);
+  tft.endWrite();
 }
 
 static void drawAuthMessage(const String& msg) {
@@ -615,6 +622,8 @@ static void drawBigTile(int x, int y, int w, int h, const char* label, int value
 }
 
 static void render() {
+  // Batch the whole-screen redraw into a single SPI transaction.
+  tft.startWrite();
   tft.fillScreen(COL_BG);
 
   // Header bar
@@ -684,12 +693,23 @@ static void render() {
   int tickerY = 214;
   tft.fillRect(0, tickerY, 320, 26, CTM_GALAXY_GREY);
   tft.drawFastHLine(0, tickerY, 320, COL_DIM);
+
+  tft.endWrite();
 }
+
+// GLCD font (font 1) is a fixed 6px-per-char monospace at text size 1, so
+// per-character widths are constant - no need to query tft.textWidth() (and
+// allocate a throwaway String) for every glyph on every 50ms ticker frame.
+#define TICKER_CHAR_W 6
 
 static void drawTicker() {
   if (g_tickerText.isEmpty()) return;
   int tickerY = 214;
   int tickerH = 26;
+  int len = g_tickerText.length();
+  int textW = len * TICKER_CHAR_W;
+
+  tft.startWrite();
 
   // Clear the ticker area
   tft.fillRect(0, tickerY, 320, tickerH, CTM_GALAXY_GREY);
@@ -697,12 +717,12 @@ static void drawTicker() {
 
   tft.setTextColor(COL_TEXT);
   tft.setTextSize(1);
-  int textW = tft.textWidth(g_tickerText);
 
   if (textW <= 320) {
     // Text fits on screen - draw static
     tft.setCursor(0, tickerY + 9);
     tft.print(g_tickerText);
+    tft.endWrite();
     return;
   }
 
@@ -710,26 +730,18 @@ static void drawTicker() {
   // Calculate which character to start drawing from based on pixel offset
   // Walk through the string, drawing chars that are within the visible window
   int x = -g_tickerOffset;
-  for (unsigned int i = 0; i < g_tickerText.length(); i++) {
-    char ch = g_tickerText[i];
-    int charW = tft.textWidth(String(ch));
-    if (x + charW > 0 && x < 320) {
-      tft.drawChar(ch, x, tickerY + 9, 1);
-    }
-    x += charW;
-    if (x >= 320) break;
+  for (int i = 0; i < len && x < 320; i++) {
+    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, tickerY + 9, 1);
+    x += TICKER_CHAR_W;
   }
   // Draw second copy starting from the right edge
   x = -g_tickerOffset + textW;
-  for (unsigned int i = 0; i < g_tickerText.length() && x < 320; i++) {
-    char ch = g_tickerText[i];
-    int charW = tft.textWidth(String(ch));
-    if (x + charW > 0) {
-      tft.drawChar(ch, x, tickerY + 9, 1);
-    }
-    x += charW;
-    if (x >= 320) break;
+  for (int i = 0; i < len && x < 320; i++) {
+    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, tickerY + 9, 1);
+    x += TICKER_CHAR_W;
   }
+
+  tft.endWrite();
 
   // Advance offset
   g_tickerOffset += 2;
@@ -806,12 +818,12 @@ void loop() {
         delay(5000);
         return;
       }
-      g_deviceCode = g_deviceCode;  // keep code
     }
 
     drawAuthScreen();
 
     // Poll at the specified interval
+    // (device code is retained until success, expiry, or denial)
     if (now - g_lastPollMs >= (unsigned long)g_pollInterval * 1000UL) {
       g_lastPollMs = now;
       int result = pollDeviceToken();

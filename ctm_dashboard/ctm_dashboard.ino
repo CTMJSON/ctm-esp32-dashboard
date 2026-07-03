@@ -34,18 +34,18 @@
 
 #define REFRESH_MS    60000UL
 #define API_HOST      "api.calltrackingmetrics.com"
+// Raised from 2 now that fetchRecentCalls() parses the response as a filtered
+// stream instead of buffering the whole payload - keep <= MAX_SUMMARIES below.
+#define RECENT_CALLS_PAGE_SIZE 8
 
 TFT_eSPI tft = TFT_eSPI();
 Preferences prefs;
 
-// Draw the CTM logomark with transparency (skip 0x0000 pixels)
+// Draw the CTM logomark with transparency (skip 0x0000 pixels).
+// pushImage batches the whole 26x25 sprite into a single SPI transfer
+// instead of one drawPixel() (and SPI transaction) per pixel.
 static void drawCtmLogo(int x, int y) {
-  for (int row = 0; row < CTM_LOGO_H; row++) {
-    for (int col = 0; col < CTM_LOGO_W; col++) {
-      uint16_t px = pgm_read_word(&ctm_logo[row * CTM_LOGO_W + col]);
-      if (px != 0x0000) tft.drawPixel(x + col, y + row, px);
-    }
-  }
+  tft.pushImage(x, y, CTM_LOGO_W, CTM_LOGO_H, ctm_logo, (uint16_t)0x0000);
 }
 
 // CTM brand palette (RGB565)
@@ -305,8 +305,14 @@ static bool refreshAccessToken() {
       if (at && *at) {
         String newRefresh = doc["refresh_token"].as<const char*>();
         if (newRefresh.isEmpty()) newRefresh = g_refreshToken;
-        String acctId = doc["account_id"].as<String>();
-        if (acctId.isEmpty()) acctId = g_accountId;
+        // account_id is often omitted on refresh responses; keep the existing
+        // one in that case instead of risking a stringified "null" landing
+        // in NVS (as<String>() on a missing/null key is not reliably empty).
+        String acctId = g_accountId;
+        if (!doc["account_id"].isNull()) {
+          int acctInt = doc["account_id"].as<int>();
+          if (acctInt > 0) acctId = String(acctInt);
+        }
         saveTokens(at, newRefresh, acctId);
         ok = true;
       }
@@ -460,21 +466,50 @@ static bool fetchRecentCalls() {
   WiFiClientSecure s; s.setInsecure();
   HTTPClient http;
   http.begin(s, String("https://") + API_HOST + "/api/v1/accounts/" + g_accountId +
-             "/calls?direction=inbound&status=answered&has_transcription=1&per_page=2&sort=desc");
+             "/calls?direction=inbound&status=answered&has_transcription=1&per_page=" +
+             String(RECENT_CALLS_PAGE_SIZE) + "&sort=desc");
   http.addHeader("Authorization", bearerHeader());
   http.addHeader("Accept", "application/json");
-  http.setTimeout(15000);
+  http.setTimeout(20000);
   int code = http.GET();
   bool ok = false;
   String newTicker = "";
   int newCount = 0;
   if (code == 200) {
-    String payload = http.getString();
+    // WiFiClientSecure's read() is non-blocking: it returns whatever's
+    // currently buffered and 0/-1 when nothing has arrived *yet* (not
+    // necessarily EOF - TLS records land in discrete chunks). Parsing
+    // straight off the stream with ArduinoJson doesn't retry on that, so it
+    // reports IncompleteInput on anything larger than what fits in a single
+    // TLS record. Buffer the full (known-size, from Content-Length) response
+    // first with the same idle-timeout poll loop fetchAgents() already uses
+    // below, then parse the complete buffer.
+    int contentLen = http.getSize();
+    size_t bufSize = contentLen > 0 ? (size_t)contentLen + 1 : 90000;
+    char* buf = (char*)malloc(bufSize);
+    if (!buf) { http.end(); return false; }
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t total = 0;
+    unsigned long lastData = millis();
+    while (millis() - lastData < 8000UL && total < bufSize - 1) {
+      while (stream->available() && total < bufSize - 1) {
+        int n = stream->readBytes(buf + total, bufSize - 1 - total);
+        if (n > 0) { total += n; lastData = millis(); }
+        else break;
+      }
+      delay(5);
+    }
+    buf[total] = '\0';
+
     JsonDocument filter;
     filter["calls"][0]["summary"] = true;
     filter["calls"][0]["direction"] = true;
     JsonDocument doc;
-    if (!deserializeJson(doc, payload.c_str(), DeserializationOption::Filter(filter))) {
+    DeserializationError jerr = deserializeJson(doc, buf, total, DeserializationOption::Filter(filter));
+    free(buf);
+
+    if (!jerr) {
       JsonArray calls = doc["calls"];
       if (!calls.isNull()) {
         for (JsonObject c : calls) {
@@ -513,6 +548,9 @@ static bool fetchRecentCalls() {
 // --- Auth screen (device flow UI) -------------------------------------------
 
 static void drawAuthScreen() {
+  // Batch all the fills/text/pixels below into a single SPI transaction
+  // instead of one open+close per draw call.
+  tft.startWrite();
   tft.fillScreen(COL_BG);
 
   // Header
@@ -575,6 +613,7 @@ static void drawAuthScreen() {
   tft.setTextColor(remaining < 60 ? COL_ERR : COL_OK);
   tft.setCursor(10, 205);
   tft.printf("%d:%02d remaining", mins, secs);
+  tft.endWrite();
 }
 
 static void drawAuthMessage(const String& msg) {
@@ -615,6 +654,8 @@ static void drawBigTile(int x, int y, int w, int h, const char* label, int value
 }
 
 static void render() {
+  // Batch the whole-screen redraw into a single SPI transaction.
+  tft.startWrite();
   tft.fillScreen(COL_BG);
 
   // Header bar
@@ -684,12 +725,23 @@ static void render() {
   int tickerY = 214;
   tft.fillRect(0, tickerY, 320, 26, CTM_GALAXY_GREY);
   tft.drawFastHLine(0, tickerY, 320, COL_DIM);
+
+  tft.endWrite();
 }
+
+// GLCD font (font 1) is a fixed 6px-per-char monospace at text size 1, so
+// per-character widths are constant - no need to query tft.textWidth() (and
+// allocate a throwaway String) for every glyph on every 50ms ticker frame.
+#define TICKER_CHAR_W 6
 
 static void drawTicker() {
   if (g_tickerText.isEmpty()) return;
   int tickerY = 214;
   int tickerH = 26;
+  int len = g_tickerText.length();
+  int textW = len * TICKER_CHAR_W;
+
+  tft.startWrite();
 
   // Clear the ticker area
   tft.fillRect(0, tickerY, 320, tickerH, CTM_GALAXY_GREY);
@@ -697,12 +749,12 @@ static void drawTicker() {
 
   tft.setTextColor(COL_TEXT);
   tft.setTextSize(1);
-  int textW = tft.textWidth(g_tickerText);
 
   if (textW <= 320) {
     // Text fits on screen - draw static
     tft.setCursor(0, tickerY + 9);
     tft.print(g_tickerText);
+    tft.endWrite();
     return;
   }
 
@@ -710,26 +762,18 @@ static void drawTicker() {
   // Calculate which character to start drawing from based on pixel offset
   // Walk through the string, drawing chars that are within the visible window
   int x = -g_tickerOffset;
-  for (unsigned int i = 0; i < g_tickerText.length(); i++) {
-    char ch = g_tickerText[i];
-    int charW = tft.textWidth(String(ch));
-    if (x + charW > 0 && x < 320) {
-      tft.drawChar(ch, x, tickerY + 9, 1);
-    }
-    x += charW;
-    if (x >= 320) break;
+  for (int i = 0; i < len && x < 320; i++) {
+    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, tickerY + 9, 1);
+    x += TICKER_CHAR_W;
   }
   // Draw second copy starting from the right edge
   x = -g_tickerOffset + textW;
-  for (unsigned int i = 0; i < g_tickerText.length() && x < 320; i++) {
-    char ch = g_tickerText[i];
-    int charW = tft.textWidth(String(ch));
-    if (x + charW > 0) {
-      tft.drawChar(ch, x, tickerY + 9, 1);
-    }
-    x += charW;
-    if (x >= 320) break;
+  for (int i = 0; i < len && x < 320; i++) {
+    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, tickerY + 9, 1);
+    x += TICKER_CHAR_W;
   }
+
+  tft.endWrite();
 
   // Advance offset
   g_tickerOffset += 2;
@@ -739,6 +783,7 @@ static void drawTicker() {
 // --- Setup / Loop -----------------------------------------------------------
 
 void setup() {
+  Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(COL_BG);
@@ -806,12 +851,12 @@ void loop() {
         delay(5000);
         return;
       }
-      g_deviceCode = g_deviceCode;  // keep code
     }
 
     drawAuthScreen();
 
     // Poll at the specified interval
+    // (device code is retained until success, expiry, or denial)
     if (now - g_lastPollMs >= (unsigned long)g_pollInterval * 1000UL) {
       g_lastPollMs = now;
       int result = pollDeviceToken();

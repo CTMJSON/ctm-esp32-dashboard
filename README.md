@@ -1,10 +1,11 @@
-# CTM Activity Dashboard 🖥️📞
+# CTM Activity Dashboard 
 
-<img width="3484" height="2613" alt="IMG_9761" src="https://github.com/user-attachments/assets/94fbbf8d-5d07-4ada-b81c-e4d70076f91a" />
+<img width="1195" height="896" alt="IMG_9766" src="https://github.com/user-attachments/assets/6e7b0434-c33c-4302-99fe-f1dca86de0f0" />
 
-A little desk gadget that shows your [CallTrackingMetrics](https://www.calltrackingmetrics.com) account's live call and chat activity — active calls, today's totals, agent status, and a scrolling ticker of recent call summaries — on a cheap ESP32 board with a built-in color screen. It refreshes every 60 seconds and just sits there being useful (and kind of fun to glance at).
 
-**Heads up:** this is a personal hobby project, not an official CTM product. I built it for my own desk and figured other CTM folks might enjoy it too. It's shared as-is, no support SLA, but I'm happy to help — see [Questions & support](#questions--support) below.
+A little desk gadget that shows your [CTM](https://www.calltrackingmetrics.com) account's live call and chat activity — active calls, today's totals, agent status, and a scrolling ticker of recent call summaries — on a cheap ESP32 board with a built-in color screen. It refreshes every 60 seconds and just sits there being useful (and kind of fun to glance at).
+
+**Heads up:** this is a personal hobby project, not an official CTM product. I built it for my own desk and figured other CTM users might enjoy it too. It's shared as-is, no support SLA, but I'm happy to help — see [Questions & support](#questions--support) below.
 
 — Jason Smith (jason.smith@ctm.com)
 
@@ -91,7 +92,7 @@ If you're using a different ESP32 + ILI9341 board, swap in your board's actual p
 
 The dashboard authenticates using CTM's OAuth2 **device flow** — the same pattern smart TVs and streaming boxes use to log into a service ("visit this URL and enter this code"). Nothing sensitive ever gets typed on the device itself, and no long-lived API key gets baked into the firmware.
 
-1. In CTM, go to your account's API/OAuth app settings and create a new OAuth application.
+1. In CTM, go to your account's [API/OAuth app settings](https://app.calltrackingmetrics.com/oauth_apps/new) and create a new OAuth application.
 2. Enable **Device** flow.
 3. Check all scopes (`profile`, `reports`, `activity`, `manage`, `route_apps`).
 4. Save it and copy the **Client ID** and **Client Secret** — you'll need those next.

@@ -1,19 +1,14 @@
-# CTM ESP32 Activity Dashboard
+# CTM Activity Dashboard 🖥️📞
 
 <img width="3484" height="2613" alt="IMG_9761" src="https://github.com/user-attachments/assets/94fbbf8d-5d07-4ada-b81c-e4d70076f91a" />
 
+A little desk gadget that shows your [CallTrackingMetrics](https://www.calltrackingmetrics.com) account's live call and chat activity — active calls, today's totals, agent status, and a scrolling ticker of recent call summaries — on a cheap ESP32 board with a built-in color screen. It refreshes every 60 seconds and just sits there being useful (and kind of fun to glance at).
 
-A compact, always-on activity dashboard for [CallTrackingMetrics](https://www.calltrackingmetrics.com) that runs on an ESP32 with a built-in color TFT. It sits on a desk and refreshes every 60 seconds, showing live call, chat, agent activity, and recent call summaries for the current day.
+**Heads up:** this is a personal hobby project, not an official CTM product. I built it for my own desk and figured other CTM folks might enjoy it too. It's shared as-is, no support SLA, but I'm happy to help — see [Questions & support](#questions--support) below.
 
-## Hardware
+— Jason Smith (jason.smith@ctm.com)
 
-- **Board:** ESP32-2432S028R ("Cheap Yellow Display" / CYD)
-  - ESP32-D0WD-V3 (dual-core, Wi-Fi + BT), 4 MB flash
-  - Built-in 2.8" 320x240 ILI9341 SPI TFT (resistive touch via XPT2046, unused here)
-  - USB-powered and programmed; no external wiring required
-- Any ESP32 + ILI9341 setup works with minor pin changes in `User_Setup.h`.
-
-## What it shows
+## What it looks like on the screen
 
 ```
 ┌──────────────────────────────────────────┐
@@ -32,47 +27,43 @@ A compact, always-on activity dashboard for [CallTrackingMetrics](https://www.ca
 └──────────────────────────────────────────┘
 ```
 
-- **Active Calls** — `in_progress_count` from the history endpoint (lime when > 0)
-- **Peak / Min** — highest per-minute activity across all directions today
-- **Agents** — ready = `accept: true` AND `value: "online"`; everything else = not ready
-- **IN / OUT / CHAT / MISSED / VIDEO** — today's totals per direction
-- **Ticker** — recent inbound answered call transcriptions (AI-generated summaries), scrolling along the bottom
+- **Active Calls** — calls in progress right now (lights up lime when > 0)
+- **Peak / Min** — the busiest minute so far today, across calls/chats/video combined
+- **Agents** — how many are ready to take a call vs. not (accepting calls *and* online)
+- **IN / OUT / CHAT / MISSED / VIDEO** — today's totals by type
+- **Ticker** — a scrolling feed of your most recent answered call summaries (the AI-generated ones), so you get a feel for what's coming in without opening the app
 
 Colors follow the CTM brand palette: Space Navy background, Nebula Blue header, Dark Matter Blue tiles, Sky Blue and Supernova Lime accents.
 
-## Authentication: OAuth2 Device Flow
+## What you'll need
 
-The dashboard uses CTM's OAuth2 device flow — no hardcoded API keys. On first boot (or after token expiry), the TFT displays a user code and verification URL. The user visits the URL, enters the code, and authorizes the device. Tokens are stored in NVS (persistent across reboots) and refreshed automatically.
+| Item | Notes |
+|---|---|
+| **ESP32-2432S028R** ("Cheap Yellow Display" / CYD) | ~$10-15 on AliExpress/Amazon. Search "ESP32 2.8 inch CYD". Screen, board, and USB port all built in — nothing to wire up. |
+| **USB-C or Micro-USB cable** (check which your board uses) | For programming and power. It can stay plugged into any USB power source afterward. |
+| **A computer with the Arduino IDE** | Free, works on Mac/Windows/Linux. This is a one-time setup step. |
+| **A CTM account** with permission to create OAuth apps | You'll register a small OAuth client (takes 2 minutes) — no API keys get hardcoded into the firmware. |
+| **Wi-Fi** | The board needs a 2.4GHz network (ESP32s don't do 5GHz). |
 
-All five CTM OAuth scopes are requested: `profile`, `reports`, `activity`, `manage`, `route_apps`.
+Any other ESP32 board with an ILI9341 SPI display works too, with a few pin changes — see [Configure the display driver](#2-configure-the-display-driver) below. But the CYD is the easiest path since it needs zero wiring.
 
-## API endpoints used
+## Setting it up
 
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/oauth2/device_token` | POST | Start device flow, get user code |
-| `/oauth2/token` | POST | Poll for access token / refresh token |
-| `/api/v1/accounts/{id}` | GET | Read account timezone (for local clock display) |
-| `/api/v1/accounts/{id}/calls/history.json?interval=today` | GET | Today's call/chat/video totals + active count + peak |
-| `/api/v1/accounts/{id}/agents/history.json?bypass=cache` | POST | Agent ready/not-ready counts for today |
-| `/api/v1/accounts/{id}/calls?direction=inbound&status=answered&has_transcription=1&per_page=2&sort=desc` | GET | Recent call transcriptions for ticker |
+This takes about 15-20 minutes the first time, mostly waiting on downloads. You won't need to touch the code — just fill in a few values.
 
-Authentication is Bearer token (`Authorization: Bearer {access_token}`).
+### 1. Install the Arduino IDE and libraries
 
-## Setup
+1. Download the [Arduino IDE](https://www.arduino.cc/en/software) (2.x) if you don't have it.
+2. Add ESP32 board support: **Arduino IDE → Settings → Additional boards manager URLs**, add `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`, then **Tools → Board → Boards Manager**, search "esp32", install the Espressif package.
+3. Install two libraries via **Sketch → Include Library → Manage Libraries**:
+   - **TFT_eSPI** (by Bodmer)
+   - **ArduinoJson** v7+ (by Benoit Blanchon)
 
-### 1. Arduino IDE libraries
+(Adafruit GFX/ILI9341 aren't used here, no need to install them.)
 
-Install via **Sketch → Include Library → Manage Libraries**:
+### 2. Configure the display driver
 
-- **TFT_eSPI** (by Bodmer)
-- **ArduinoJson** v7+ (by Benoit Blanchon)
-
-Adafruit GFX/ILI9341 are not used.
-
-### 2. Configure TFT_eSPI for the CYD
-
-Replace `~/Documents/Arduino/libraries/TFT_eSPI/User_Setup.h` with the following (this is the CYD pinout — the critical part is `TFT_RST = 12`):
+TFT_eSPI needs to know your board's pin layout before it'll draw anything. Find the library's `User_Setup.h` (usually under your Arduino libraries folder → `TFT_eSPI/User_Setup.h`) and replace its contents with:
 
 ```c
 #define USER_SETUP_INFO "CYD-2432S028R"
@@ -92,9 +83,22 @@ Replace `~/Documents/Arduino/libraries/TFT_eSPI/User_Setup.h` with the following
 #define SMOOTH_FONT
 ```
 
-### 3. Create your secrets file
+This is the pinout for the CYD board specifically — the one setting that really matters is `TFT_RST = 12` (some CYD guides leave this at `-1`, which leaves the screen blank).
 
-Copy `secrets.h.template` to `ctm_dashboard/secrets.h` and fill in:
+If you're using a different ESP32 + ILI9341 board, swap in your board's actual pins here.
+
+### 3. Register an OAuth app in CTM
+
+The dashboard authenticates using CTM's OAuth2 **device flow** — the same pattern smart TVs and streaming boxes use to log into a service ("visit this URL and enter this code"). Nothing sensitive ever gets typed on the device itself, and no long-lived API key gets baked into the firmware.
+
+1. In CTM, go to your account's API/OAuth app settings and create a new OAuth application.
+2. Enable **Device** flow.
+3. Check all scopes (`profile`, `reports`, `activity`, `manage`, `route_apps`).
+4. Save it and copy the **Client ID** and **Client Secret** — you'll need those next.
+
+### 4. Add your Wi-Fi and OAuth credentials
+
+Copy `secrets.h.template` to `ctm_dashboard/secrets.h` and fill in your own values:
 
 ```c
 #define WIFI_SSID "your_wifi_ssid"
@@ -103,36 +107,68 @@ Copy `secrets.h.template` to `ctm_dashboard/secrets.h` and fill in:
 #define CTM_CLIENT_SECRET "your_oauth_client_secret"
 ```
 
-Register an OAuth2 app in CTM with **Device only** flow enabled and all scopes checked. Use the provided client ID and secret.
+`secrets.h` is git-ignored, so your real credentials never get committed if you fork or push changes.
 
-`secrets.h` is git-ignored — never commit real credentials.
+### 5. Flash it
 
-### 4. Board settings
+1. Plug the board in via USB.
+2. Open `ctm_dashboard/ctm_dashboard.ino` in the Arduino IDE.
+3. **Tools → Board:** `ESP32 Dev Module`
+4. **Tools → Upload Speed:** `460800` (the common CYD USB chips — CH340/CH9102F — can be flaky at the default 921600)
+5. **Tools → Port:** pick the `cu.usbserial-*` / `COM*` port that shows up when the board is plugged in
+6. Click **Upload**
 
-- **Board:** ESP32 Dev Module
-- **Upload Speed:** 460800 (lower than 921600 for stability on CH340/CH9102F clones)
-- **Port:** the `cu.usbserial-*` device that appears when you plug in
+### 6. Connect your CTM account
 
-### 5. Upload
+On first boot, the screen walks you through it:
 
-Open `ctm_dashboard/ctm_dashboard.ino`, set the port, click Upload. On first boot:
-1. Connects Wi-Fi
-2. Starts OAuth2 device flow — TFT shows a user code
-3. Visit `app.calltrackingmetrics.com/accesscode` on your phone/PC, enter the code
-4. Device polls until authorized, then stores tokens in NVS
-5. Syncs NTP, fetches account timezone, renders the dashboard
+1. Connects to your Wi-Fi
+2. Shows a short code and a URL (`app.calltrackingmetrics.com/accesscode`)
+3. Grab your phone or another computer, visit that URL, and enter the code
+4. Once you approve it, the board finishes syncing and the dashboard appears
 
-Subsequent boots load tokens from NVS and go straight to the dashboard.
+That's it — tokens are stored on the device (in flash, not on a server) and refresh themselves automatically, so it'll go straight to the dashboard on every reboot after that. You won't need to log in again unless you unplug it for a very long time or revoke the OAuth app.
 
-## Notes
+## Questions & support
 
-- HTTPS certificate validation is skipped (`WiFiClientSecure::setInsecure`). Fine for a LAN dashboard; use a CA bundle if you need it.
-- NTP is used only for the on-screen clock and day-of-week; the API calls rely on the server's `interval=today` so data is correct even before NTP syncs.
-- The agent status endpoint requires POST with form-encoded body (`interval=today&agent_ids=all`) — a plain GET returns only agents active in the last hour.
-- Call transcriptions are limited to `per_page=2` because the ESP32's HTTP buffer can't handle the full 220KB payload from larger page sizes.
-- The agents/history endpoint returns 274KB (mostly the `series` array); the sketch reads only the first 50KB into a heap buffer, truncates at `"series"`, and parses just the agents array (~42KB).
-- The ESP32 has ~280 KB of free RAM; the ~20 KB agent response is parsed without a JSON filter (ArduinoJson's filter doesn't work on array nodes with object patterns).
-- Token version is tracked in NVS; bumping the version flag in code automatically clears old tokens on boot (useful when changing OAuth scopes).
+This is a for-fun side project, so there's no formal support channel — but if you're a fellow CTM user setting one of these up and get stuck, or just want to share what you built, email me at **jason.smith@ctm.com**. Happy to help troubleshoot or hear ideas for what else would be good to show on it.
+
+## Troubleshooting
+
+- **Screen stays black after flashing** — double check `TFT_RST` is `12`, not `-1`, in your `User_Setup.h`. This is the #1 gotcha on CYD boards.
+- **Upload fails / times out** — try a lower upload speed (`115200`), a different USB cable (some are charge-only), or hold the board's `BOOT` button while upload starts.
+- **Stuck on "WiFi: connecting..."** — the ESP32 only supports 2.4GHz networks; make sure that band is enabled on your router, and double-check `WIFI_SSID`/`WIFI_PASS` in `secrets.h`.
+- **Device code screen never goes away** — you have ~25 minutes to enter the code before it expires and generates a new one; make sure you're visiting the exact URL shown and entering the code without extra spaces.
+- **Dashboard shows "ERR" or stale data** — this usually clears itself on the next 60-second refresh. If it persists, the OAuth token may have been revoked on the CTM side; unplug/replug the device to force a fresh device-flow login.
+
+## How it works, for the curious
+
+### Authentication
+
+OAuth2 device flow, no hardcoded API keys. Tokens are stored in the ESP32's NVS (non-volatile flash storage) and persist across reboots; access tokens refresh automatically in the background.
+
+### API endpoints used
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/oauth2/device_token` | POST | Start device flow, get user code |
+| `/oauth2/token` | POST | Poll for access token / refresh token |
+| `/api/v1/accounts/{id}` | GET | Read account timezone (for local clock display) |
+| `/api/v1/accounts/{id}/calls/history.json?interval=today` | GET | Today's call/chat/video totals + active count + peak |
+| `/api/v1/accounts/{id}/agents/history.json?bypass=cache` | POST | Agent ready/not-ready counts for today |
+| `/api/v1/accounts/{id}/calls?direction=inbound&status=answered&has_transcription=1&per_page=8&sort=desc` | GET | Recent call transcriptions for the ticker |
+
+All requests use Bearer token auth (`Authorization: Bearer {access_token}`).
+
+### Implementation notes
+
+- HTTPS certificate validation is skipped (`WiFiClientSecure::setInsecure`). That's fine for a desk gadget on a home/office LAN; swap in a CA bundle if you need stricter validation.
+- NTP is used only for the on-screen clock and day-of-week — the API calls rely on the server's `interval=today`, so the numbers are correct even before NTP has synced.
+- The agent status endpoint needs a POST with a form-encoded body (`interval=today&agent_ids=all`); a plain GET only returns agents active in the last hour.
+- The recent-calls response is buffered into a heap buffer sized to the response's `Content-Length` and freed right after parsing, rather than held for the life of the request — that's what makes `per_page=8` (up from an earlier `per_page=2`) affordable on the ESP32's limited RAM.
+- The agents/history endpoint returns a much larger payload (~270KB, mostly a `series` array we don't need); the sketch reads only the first 50KB into a heap buffer, truncates at `"series"`, and parses just the agents array (~40KB) out of that.
+- The ESP32 has roughly 280KB of free RAM to work with; screen redraws are batched into single SPI transactions for smoother, faster updates.
+- Token version is tracked in NVS; bumping the version flag in the code automatically clears old tokens on the next boot (useful after changing OAuth scopes).
 
 ## Project layout
 
@@ -141,8 +177,8 @@ ctm-esp32-dashboard/
 ├── README.md
 ├── .gitignore
 ├── secrets.h.template              # placeholder - copy to ctm_dashboard/secrets.h
-├── png_to_rgb565.py                # PNG to RGB565 C header converter (for logo)
-├── ttf_to_vlw.py                   # TTF to TFT_eSPI .vlw font converter
+├── png_to_rgb565.py                # PNG to RGB565 C header converter (for the logo)
+├── ttf_to_vlw.py                   # TTF to TFT_eSPI .vlw font converter (for future custom fonts)
 └── ctm_dashboard/
     ├── ctm_dashboard.ino           # the sketch
     ├── ctm_logo.h                  # CTM logomark as PROGMEM RGB565 array

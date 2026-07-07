@@ -34,9 +34,9 @@
 
 #define REFRESH_MS    60000UL
 #define API_HOST      "api.calltrackingmetrics.com"
-// Raised from 2 now that fetchRecentCalls() parses the response as a filtered
-// stream instead of buffering the whole payload - keep <= MAX_SUMMARIES below.
-#define RECENT_CALLS_PAGE_SIZE 8
+// per_page=2 keeps payload ~16KB; larger values exceed ESP32 heap after
+// agents malloc(50KB). Keep <= MAX_SUMMARIES below.
+#define RECENT_CALLS_PAGE_SIZE 2
 
 TFT_eSPI tft = TFT_eSPI();
 Preferences prefs;
@@ -783,7 +783,6 @@ static void drawTicker() {
 // --- Setup / Loop -----------------------------------------------------------
 
 void setup() {
-  Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(COL_BG);

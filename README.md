@@ -39,18 +39,19 @@ Colors follow the CTM brand palette: Space Navy background, Nebula Blue header, 
 ## What you'll need
 
 | Item | Notes |
-|---|---|
-| **ESP32-2432S028R** ("Cheap Yellow Display" / CYD) | ~$10-15 on AliExpress/Amazon. Search "ESP32 2.8 inch CYD". Screen, board, and USB port all built in — nothing to wire up. |
+|---|---|---|
+| **ESP32-2432S028R** ("Cheap Yellow Display" / CYD) | ~$10-15. 2.8" 320x240 ILI9341. Search "ESP32 2.8 inch CYD". |
+| **ESP32-32E 4.0"** (ST7796S) | ~$15-25. 4.0" 480x320 ST7796S. Search "ESP32-32E 4.0 inch ST7796". |
 | **USB-C or Micro-USB cable** (check which your board uses) | For programming and power. It can stay plugged into any USB power source afterward. |
 | **A computer with the Arduino IDE** | Free, works on Mac/Windows/Linux. This is a one-time setup step. |
 | **A CTM account** with permission to create OAuth apps | You'll register a small OAuth client (takes 2 minutes) — no API keys get hardcoded into the firmware. |
 | **Wi-Fi** | The board needs a 2.4GHz network (ESP32s don't do 5GHz). |
 
-Any other ESP32 board with an ILI9341 SPI display works too, with a few pin changes — see [Configure the display driver](#2-configure-the-display-driver) below. But the CYD is the easiest path since it needs zero wiring.
+Both board variants are built-in display ESP32s — nothing to wire up.
 
 ## Setting it up
 
-This takes about 15-20 minutes the first time, mostly waiting on downloads. You won't need to touch the code — just fill in a few values.
+This takes about 15-20 minutes the first time, mostly waiting on downloads. The code auto-detects the display variant at build time via `User_Setup.h`, so you just need the right pinout.
 
 ### 1. Install the Arduino IDE and libraries
 
@@ -64,7 +65,9 @@ This takes about 15-20 minutes the first time, mostly waiting on downloads. You 
 
 ### 2. Configure the display driver
 
-TFT_eSPI needs to know your board's pin layout before it'll draw anything. Find the library's `User_Setup.h` (usually under your Arduino libraries folder → `TFT_eSPI/User_Setup.h`) and replace its contents with:
+TFT_eSPI needs to know your board's pin layout. Find the library's `User_Setup.h` (usually under your Arduino libraries folder → `TFT_eSPI/User_Setup.h`) and replace its contents with the matching configuration below.
+
+**Option A: 2.8" CYD (ESP32-2432S028R, ILI9341, 320x240)**
 
 ```c
 #define USER_SETUP_INFO "CYD-2432S028R"
@@ -84,9 +87,33 @@ TFT_eSPI needs to know your board's pin layout before it'll draw anything. Find 
 #define SMOOTH_FONT
 ```
 
-This is the pinout for the CYD board specifically — the one setting that really matters is `TFT_RST = 12` (some CYD guides leave this at `-1`, which leaves the screen blank).
+The one setting that really matters for this board is `TFT_RST = 12` (some CYD guides leave this at `-1`, which leaves the screen blank).
 
-If you're using a different ESP32 + ILI9341 board, swap in your board's actual pins here.
+**Option B: 4.0" ESP32-32E (ST7796S, 480x320 landscape)**
+
+```c
+#define USER_SETUP_INFO "ESP32-32E-ST7796"
+#define ST7796_DRIVER
+#define TFT_MOSI 13
+#define TFT_SCLK 14
+#define TFT_CS   15
+#define TFT_DC    2
+#define TFT_RST  -1
+#define TFT_BL   27
+#define TFT_BACKLIGHT_ON HIGH
+#define TFT_WIDTH  320
+#define TFT_HEIGHT 480
+#define SPI_FREQUENCY      40000000
+#define SPI_READ_FREQUENCY  20000000
+#define LOAD_GLCD
+#define LOAD_FONT2
+#define LOAD_GFXFF
+#define SMOOTH_FONT
+```
+
+Key differences from the CYD: `TFT_RST = -1` (connected to ESP32 RST), `TFT_BL = 27` (not 21 — wrong pin gives a black screen), and `ST7796_DRIVER` instead of `ILI9341_2_DRIVER`. The sketch uses rotation 1 to render at 480x320 landscape.
+
+Other ESP32 display boards work too — swap in your board's driver and pins.
 
 ### 3. Register an OAuth app in CTM
 

@@ -1,9 +1,8 @@
 /*
-  CTM Activity Dashboard  -  ESP32-2432S028R (Cheap Yellow Display)
+  CTM Activity Dashboard  -  ESP32-32E 4.0\" ST7796S 480x320
   ---------------------------------------------------------------
-  Board: ESP32-D0WD-V3 + built-in 2.8" 320x240 ILI9341 SPI TFT.
-  No external wiring required - display is hard-wired on the board.
-  Display config lives in TFT_eSPI/User_Setup.h (CYD pins, TFT_RST=12).
+  Board: ESP32-D0WD-V3 + built-in 4.0" 480x320 ST7796S SPI TFT.
+  Display config lives in TFT_eSPI/User_Setup.h (ESP32-32E pinout).
 
   Authentication: OAuth2 Device Flow
     On first boot (or after token expiry), the device shows a user code
@@ -34,9 +33,23 @@
 
 #define REFRESH_MS    60000UL
 #define API_HOST      "api.calltrackingmetrics.com"
-// per_page=2 keeps payload ~16KB; larger values exceed ESP32 heap after
-// agents malloc(50KB). Keep <= MAX_SUMMARIES below.
-#define RECENT_CALLS_PAGE_SIZE 2
+
+// --- 4.0" 480x320 landscape layout -----------------------------------------
+#define SCREEN_W      480
+#define SCREEN_H      320
+#define HEADER_H      30
+#define BIG_TILE_Y    54
+#define BIG_TILE_H    90
+#define BIG_TILE_W    238
+#define AGENT_Y       148
+#define AGENT_H       42
+#define SMALL_TILE_Y  194
+#define SMALL_TILE_H  60
+#define SMALL_TILE_W  94
+#define TICKER_Y      258
+#define TICKER_H      62
+// per_page=4 yields ~30KB response, well within the 277KB free heap
+#define RECENT_CALLS_PAGE_SIZE 4
 
 TFT_eSPI tft = TFT_eSPI();
 Preferences prefs;
@@ -184,14 +197,14 @@ static void showBoot(const String& s) {
   tft.fillScreen(COL_BG);
   tft.setTextColor(COL_TEXT);
   tft.setTextSize(2);
-  tft.setCursor(10, 10);
+  tft.setCursor(10, 30);
   tft.print(F("CTM Dashboard"));
   tft.setTextSize(1);
   tft.setTextColor(0x7BEF);
-  tft.setCursor(10, 40);
-  tft.print(F("ESP32-2432S028R (CYD)"));
+  tft.setCursor(10, 60);
+  tft.print(F("ESP32-32E 4.0\" ST7796"));
   tft.setTextColor(COL_TEXT);
-  tft.setCursor(10, 70);
+  tft.setCursor(10, 90);
   tft.print(s);
 }
 
@@ -554,48 +567,47 @@ static void drawAuthScreen() {
   tft.fillScreen(COL_BG);
 
   // Header
-  tft.fillRect(0, 0, 320, 26, COL_HEADER);
-  drawCtmLogo(6, 0);
+  tft.fillRect(0, 0, SCREEN_W, HEADER_H, COL_HEADER);
+  drawCtmLogo(6, (HEADER_H - CTM_LOGO_H) / 2);
   tft.setTextColor(COL_TEXT);
   tft.setTextSize(2);
-  tft.setCursor(38, 6);
+  tft.setCursor(38, 8);
   tft.print(F("Authorize"));
 
   // "Authorize This Device"
   tft.setTextColor(COL_TEXT);
   tft.setTextSize(2);
-  tft.setCursor(50, 38);
+  tft.setCursor(160, 40);
   tft.print(F("Authorize Device"));
 
   // Step 1
   tft.setTextColor(0x7BEF);
   tft.setTextSize(1);
-  tft.setCursor(10, 68);
+  tft.setCursor(20, 68);
   tft.print(F("1. On your phone or PC, visit:"));
 
   // URL box
-  tft.fillRect(10, 80, 300, 20, COL_TILE);
+  tft.fillRect(20, 80, SCREEN_W - 40, 22, COL_TILE);
   tft.setTextColor(CTM_SKY_BLUE);
   tft.setTextSize(1);
-  tft.setCursor(16, 86);
-  // Strip https:// for display
+  tft.setCursor(26, 86);
   String url = g_verifyUri;
   url.replace("https://", "");
   tft.print(url);
 
   // Step 2
   tft.setTextColor(0x7BEF);
-  tft.setCursor(10, 112);
+  tft.setCursor(20, 114);
   tft.print(F("2. Enter this code:"));
 
   // Code box (big, centered)
   tft.setTextSize(4);
   int codeW = tft.textWidth(g_userCode);
-  int boxX = (320 - codeW - 24) / 2;
-  tft.fillRect(boxX, 124, codeW + 24, 44, COL_TILE);
-  tft.drawRect(boxX, 124, codeW + 24, 44, CTM_NEBULA_BLUE);
+  int boxX = (SCREEN_W - codeW - 24) / 2;
+  tft.fillRect(boxX, 128, codeW + 24, 52, COL_TILE);
+  tft.drawRect(boxX, 128, codeW + 24, 52, CTM_NEBULA_BLUE);
   tft.setTextColor(COL_TEXT);
-  tft.setCursor(boxX + 12, 134);
+  tft.setCursor(boxX + 12, 138);
   tft.print(g_userCode);
 
   // Status
@@ -607,20 +619,20 @@ static void drawAuthScreen() {
 
   tft.setTextColor(0x7BEF);
   tft.setTextSize(1);
-  tft.setCursor(10, 185);
+  tft.setCursor(20, 198);
   tft.print(F("Waiting for approval..."));
 
   tft.setTextColor(remaining < 60 ? COL_ERR : COL_OK);
-  tft.setCursor(10, 205);
+  tft.setCursor(20, 218);
   tft.printf("%d:%02d remaining", mins, secs);
   tft.endWrite();
 }
 
 static void drawAuthMessage(const String& msg) {
-  tft.fillRect(0, 180, 320, 60, COL_BG);
+  tft.fillRect(0, 190, SCREEN_W, 60, COL_BG);
   tft.setTextColor(COL_ERR);
   tft.setTextSize(2);
-  tft.setCursor(20, 195);
+  tft.setCursor(80, 208);
   tft.print(msg);
 }
 
@@ -631,11 +643,14 @@ static void drawSmallTile(int x, int y, int w, int h, const char* label, int val
   tft.fillRect(x, y, 3, h, accent);
   tft.setTextColor(COL_DIM);
   tft.setTextSize(1);
-  tft.setCursor(x + 6, y + 3);
+  tft.setCursor(x + 6, y + 6);
   tft.print(label);
+  // Center the number roughly in the tile height
+  int valY = y + h / 2 - 6;
+  if (valY < y + 20) valY = y + 20;
   tft.setTextColor(COL_TEXT);
-  tft.setTextSize(2);
-  tft.setCursor(x + 6, y + 20);
+  tft.setTextSize(3);
+  tft.setCursor(x + 6, valY);
   tft.print(value);
 }
 
@@ -645,86 +660,91 @@ static void drawBigTile(int x, int y, int w, int h, const char* label, int value
   tft.fillRect(x, y, w, 4, accent);
   tft.setTextColor(COL_DIM);
   tft.setTextSize(1);
-  tft.setCursor(x + 10, y + 10);
+  tft.setCursor(x + 10, y + 12);
   tft.print(label);
   tft.setTextColor(valueColor);
-  tft.setTextSize(5);
-  tft.setCursor(x + 10, y + 28);
+  tft.setTextSize(6);
+  tft.setCursor(x + 10, y + 40);
   tft.print(value);
 }
 
 static void render() {
-  // Batch the whole-screen redraw into a single SPI transaction.
   tft.startWrite();
   tft.fillScreen(COL_BG);
 
   // Header bar
-  tft.fillRect(0, 0, 320, 26, COL_HEADER);
-  drawCtmLogo(6, 0);
+  tft.fillRect(0, 0, SCREEN_W, HEADER_H, COL_HEADER);
+  drawCtmLogo(6, (HEADER_H - CTM_LOGO_H) / 2);
   tft.setTextColor(COL_TEXT);
   tft.setTextSize(2);
-  tft.setCursor(38, 6);
+  tft.setCursor(38, 8);
   tft.print(F("CTM Activity"));
   tft.setTextSize(1);
   int dateW = tft.textWidth(g_lastDate);
-  tft.setCursor(320 - dateW - 6, 9);
+  tft.setCursor(SCREEN_W - dateW - 6, 10);
   tft.print(g_lastDate);
 
   // Status line
   tft.setTextColor(0x7BEF);
   tft.setTextSize(1);
-  tft.setCursor(8, 32);
+  tft.setCursor(8, 36);
   tft.print(F("Updated "));
   tft.setTextColor(COL_TEXT);
   tft.print(g_lastUpdated);
   bool ok = (g_status == "OK");
-  tft.fillCircle(200, 36, 4, ok ? COL_OK : COL_ERR);
+  tft.fillCircle(SCREEN_W/2 - 20, 40, 4, ok ? COL_OK : COL_ERR);
   tft.setTextColor(ok ? COL_OK : COL_ERR);
-  tft.setCursor(210, 32);
+  tft.setCursor(SCREEN_W/2 - 10, 36);
   tft.print(g_firstOk ? (ok ? "OK" : "ERR") : "--");
 
-  tft.drawFastHLine(0, 44, 320, COL_DIM);
+  tft.drawFastHLine(0, 48, SCREEN_W, COL_DIM);
 
-  // Two BIG tiles
-  int bigY = 48, bigH = 72, bigW = 158;
-  drawBigTile(0,      bigY, bigW, bigH, "ACTIVE CALLS", g_active,
-              g_active > 0 ? COL_ACTIVE : COL_DIM, g_active > 0 ? COL_ACTIVE : COL_DIM);
-  drawBigTile(bigW+4, bigY, bigW, bigH, "PEAK / MIN", g_peak,
-              CTM_SKY_BLUE, COL_TEXT);
+  // Two BIG tiles side by side
+  drawBigTile(0,          BIG_TILE_Y, BIG_TILE_W, BIG_TILE_H,
+              "ACTIVE CALLS", g_active,
+              g_active > 0 ? COL_ACTIVE : COL_DIM,
+              g_active > 0 ? COL_ACTIVE : COL_DIM);
+  drawBigTile(BIG_TILE_W + 4, BIG_TILE_Y, BIG_TILE_W, BIG_TILE_H,
+              "PEAK / MIN", g_peak, CTM_SKY_BLUE, COL_TEXT);
 
-  tft.drawFastHLine(0, 124, 320, COL_DIM);
+  tft.drawFastHLine(0, BIG_TILE_Y + BIG_TILE_H, SCREEN_W, COL_DIM);
 
   // Agent strip
-  int agentY = 128;
-  tft.fillRect(0, agentY, 320, 18, CTM_GALAXY_GREY);
+  tft.fillRect(0, AGENT_Y, SCREEN_W, AGENT_H, CTM_GALAXY_GREY);
+  tft.setTextSize(2);
   tft.setTextColor(COL_DIM);
-  tft.setTextSize(1);
-  tft.setCursor(6, agentY + 5);
+  tft.setCursor(10, AGENT_Y + 13);
   tft.print(F("AGENTS"));
-  tft.fillCircle(70, agentY + 9, 4, COL_OK);
+  tft.fillCircle(140, AGENT_Y + AGENT_H/2, 6, COL_OK);
   tft.setTextColor(COL_OK);
-  tft.setCursor(80, agentY + 5);
+  tft.setCursor(152, AGENT_Y + 13);
   tft.printf("%d READY", g_agentsReady);
-  tft.fillCircle(190, agentY + 9, 4, COL_ERR);
+  tft.fillCircle(300, AGENT_Y + AGENT_H/2, 6, COL_ERR);
   tft.setTextColor(COL_ERR);
-  tft.setCursor(200, agentY + 5);
+  tft.setCursor(312, AGENT_Y + 13);
   tft.printf("%d NOT READY", g_agentsNotReady);
 
-  tft.drawFastHLine(0, 148, 320, COL_DIM);
+  tft.drawFastHLine(0, AGENT_Y + AGENT_H, SCREEN_W, COL_DIM);
 
   // 5 small tiles: IN | OUT | CHAT | MISSED | VIDEO
-  // Shrunk from 80px to 60px to fit ticker at bottom
-  int tileW = 63, tileH = 60, tileY = 152;
-  drawSmallTile(0*tileW + 0, tileY, tileW, tileH, "IN",     g_inbound,  COL_IN);
-  drawSmallTile(1*tileW + 1, tileY, tileW, tileH, "OUT",    g_outbound, COL_OUT);
-  drawSmallTile(2*tileW + 2, tileY, tileW, tileH, "CHAT",   g_chats,    COL_CHAT);
-  drawSmallTile(3*tileW + 3, tileY, tileW, tileH, "MISSED", g_missed,   COL_MISS);
-  drawSmallTile(4*tileW + 4, tileY, tileW, tileH, "VIDEO",  g_videos,   COL_VID);
+  int tileGap = (SCREEN_W - 5 * SMALL_TILE_W) / 4;
+  for (int i = 0; i < 5; i++) {
+    const char* label;
+    int value; uint16_t accent;
+    switch (i) {
+      case 0: label = "IN";     value = g_inbound;  accent = COL_IN;   break;
+      case 1: label = "OUT";    value = g_outbound; accent = COL_OUT;  break;
+      case 2: label = "CHAT";   value = g_chats;    accent = COL_CHAT; break;
+      case 3: label = "MISSED"; value = g_missed;   accent = COL_MISS; break;
+      case 4: label = "VIDEO";  value = g_videos;   accent = COL_VID;  break;
+    }
+    int tx = i * (SMALL_TILE_W + tileGap);
+    drawSmallTile(tx, SMALL_TILE_Y, SMALL_TILE_W, SMALL_TILE_H, label, value, accent);
+  }
 
   // Ticker strip background
-  int tickerY = 214;
-  tft.fillRect(0, tickerY, 320, 26, CTM_GALAXY_GREY);
-  tft.drawFastHLine(0, tickerY, 320, COL_DIM);
+  tft.fillRect(0, TICKER_Y, SCREEN_W, TICKER_H, CTM_GALAXY_GREY);
+  tft.drawFastHLine(0, TICKER_Y, SCREEN_W, COL_DIM);
 
   tft.endWrite();
 }
@@ -732,51 +752,44 @@ static void render() {
 // GLCD font (font 1) is a fixed 6px-per-char monospace at text size 1, so
 // per-character widths are constant - no need to query tft.textWidth() (and
 // allocate a throwaway String) for every glyph on every 50ms ticker frame.
-#define TICKER_CHAR_W 6
+#define TICKER_CHAR_W 12  // GLCD font at text size 2
 
 static void drawTicker() {
   if (g_tickerText.isEmpty()) return;
-  int tickerY = 214;
-  int tickerH = 26;
   int len = g_tickerText.length();
   int textW = len * TICKER_CHAR_W;
 
   tft.startWrite();
 
-  // Clear the ticker area
-  tft.fillRect(0, tickerY, 320, tickerH, CTM_GALAXY_GREY);
-  tft.drawFastHLine(0, tickerY, 320, COL_DIM);
+  // Use background color on text to clear old chars, no full fillRect needed
+  tft.setTextColor(COL_TEXT, CTM_GALAXY_GREY);
+  tft.setTextSize(2);
 
-  tft.setTextColor(COL_TEXT);
-  tft.setTextSize(1);
+  int cursorY = TICKER_Y + TICKER_H / 2 - 8;
+  if (cursorY < TICKER_Y + 16) cursorY = TICKER_Y + 16;
 
-  if (textW <= 320) {
-    // Text fits on screen - draw static
-    tft.setCursor(0, tickerY + 9);
+  if (textW <= SCREEN_W) {
+    tft.setCursor(0, cursorY);
     tft.print(g_tickerText);
     tft.endWrite();
     return;
   }
 
   // Scrolling text wider than screen
-  // Calculate which character to start drawing from based on pixel offset
-  // Walk through the string, drawing chars that are within the visible window
   int x = -g_tickerOffset;
-  for (int i = 0; i < len && x < 320; i++) {
-    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, tickerY + 9, 1);
+  for (int i = 0; i < len && x < SCREEN_W; i++) {
+    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, cursorY, 1);
     x += TICKER_CHAR_W;
   }
-  // Draw second copy starting from the right edge
   x = -g_tickerOffset + textW;
-  for (int i = 0; i < len && x < 320; i++) {
-    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, tickerY + 9, 1);
+  for (int i = 0; i < len && x < SCREEN_W; i++) {
+    if (x + TICKER_CHAR_W > 0) tft.drawChar(g_tickerText[i], x, cursorY, 1);
     x += TICKER_CHAR_W;
   }
 
   tft.endWrite();
 
-  // Advance offset
-  g_tickerOffset += 2;
+  g_tickerOffset += 4;
   if (g_tickerOffset >= textW) g_tickerOffset = 0;
 }
 
@@ -784,7 +797,7 @@ static void drawTicker() {
 
 void setup() {
   tft.init();
-  tft.setRotation(1);
+  tft.setRotation(1);   // 480x320 landscape
   tft.fillScreen(COL_BG);
 
   loadTokens();
